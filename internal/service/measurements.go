@@ -19,8 +19,21 @@ import (
 // MeasuredRun contains observations supplied by an operator, unlike the
 // deterministic diagnostic scenario used by the legacy equipment page.
 type MeasuredRun struct {
-	Operation model.Operation  `json:"operation"`
-	Evidence  []model.Evidence `json:"evidence"`
+	Operation model.Operation   `json:"operation"`
+	Evidence  []model.Evidence  `json:"evidence"`
+	Positions []PositionReading `json:"positions"`
+}
+
+// PositionReading records one observed carriage position together with the
+// calibrated value and the calibration version that produced it, so later
+// analysis can trace every corrected position back to its curve.
+type PositionReading struct {
+	ID            model.EventID       `json:"id"`
+	Run           model.RunID         `json:"run"`
+	Raw           float64             `json:"raw"`
+	Corrected     float64             `json:"corrected"`
+	CalibrationID model.CalibrationID `json:"calibration_id,omitempty"`
+	RecordedAt    time.Time           `json:"recorded_at"`
 }
 
 type MeasurementInput struct {
@@ -31,11 +44,12 @@ type MeasurementInput struct {
 }
 
 type MeasurementAnalysis struct {
-	Operation  model.Operation `json:"operation"`
-	Wave       probe.Analysis  `json:"wave"`
-	ForceCount int             `json:"force_count"`
-	ForceMean  float64         `json:"force_mean"`
-	Evaluated  time.Time       `json:"evaluated_at"`
+	Operation  model.Operation   `json:"operation"`
+	Wave       probe.Analysis    `json:"wave"`
+	ForceCount int               `json:"force_count"`
+	ForceMean  float64           `json:"force_mean"`
+	Positions  []PositionReading `json:"positions"`
+	Evaluated  time.Time         `json:"evaluated_at"`
 }
 
 type MeasurementArchive struct {
@@ -71,6 +85,7 @@ func OpenMeasurementArchive(directory string) (*MeasurementArchive, error) {
 
 func cloneMeasuredRun(value MeasuredRun) MeasuredRun {
 	value.Evidence = append([]model.Evidence(nil), value.Evidence...)
+	value.Positions = append([]PositionReading(nil), value.Positions...)
 	return value
 }
 
@@ -111,7 +126,7 @@ func (a *MeasurementArchive) Create(name, modelName, section, carriage string) (
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	operation := model.NewOperation(name, modelName, section, carriage, time.Now().UTC())
-	value := MeasuredRun{Operation: operation, Evidence: []model.Evidence{}}
+	value := MeasuredRun{Operation: operation, Evidence: []model.Evidence{}, Positions: []PositionReading{}}
 	next := make(map[model.RunID]MeasuredRun, len(a.runs)+1)
 	for id, run := range a.runs {
 		next[id] = run
@@ -157,6 +172,35 @@ func (a *MeasurementArchive) Get(id model.RunID) (MeasuredRun, bool) {
 	return cloneMeasuredRun(run), exists
 }
 
+// AppendPosition commits an already-corrected position reading to the run.
+// Correction and version selection happen in the Runtime, which coordinates
+// with the calibration archive.
+func (a *MeasurementArchive) AppendPosition(id model.RunID, reading PositionReading) (PositionReading, error) {
+	if math.IsNaN(reading.Raw) || math.IsInf(reading.Raw, 0) || reading.RecordedAt.IsZero() || reading.RecordedAt.After(time.Now().Add(time.Minute)) {
+		return PositionReading{}, errors.New("finite position and valid observation time are required")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	run, exists := a.runs[id]
+	if !exists {
+		return PositionReading{}, errors.New("run not found")
+	}
+	reading.ID = model.NewEventID()
+	reading.Run = id
+	reading.RecordedAt = reading.RecordedAt.UTC()
+	run = cloneMeasuredRun(run)
+	run.Positions = append(run.Positions, reading)
+	next := make(map[model.RunID]MeasuredRun, len(a.runs))
+	for key, value := range a.runs {
+		next[key] = value
+	}
+	next[id] = run
+	if err := a.commit(next); err != nil {
+		return PositionReading{}, err
+	}
+	return reading, nil
+}
+
 func (a *MeasurementArchive) List() []MeasuredRun {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -174,7 +218,7 @@ func (a *MeasurementArchive) Analyze(id model.RunID) (MeasurementAnalysis, error
 		return MeasurementAnalysis{}, errors.New("run not found")
 	}
 	waves := make([]model.Evidence, 0)
-	result := MeasurementAnalysis{Operation: run.Operation, Evaluated: time.Now().UTC()}
+	result := MeasurementAnalysis{Operation: run.Operation, Positions: run.Positions, Evaluated: time.Now().UTC()}
 	for _, evidence := range run.Evidence {
 		if evidence.Kind == model.EvidenceWaveTime {
 			waves = append(waves, evidence)
