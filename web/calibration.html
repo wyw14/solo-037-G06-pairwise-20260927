@@ -1,0 +1,59 @@
+<!doctype html><html><head><meta charset="utf-8"><title>WaveLab Track Calibration</title></head><body><main>
+<h1>轨道基准点测量与分段标定</h1>
+<section>
+<h2>录入基准点</h2>
+<form id="point-form">
+<label>标签 <input name="label" placeholder="基准点A"></label>
+<label>标称位置 <input name="nominal" type="number" step="any" required></label>
+<label>正向测得 <input name="forward" type="number" step="any" required></label>
+<label>反向测得 <input name="reverse" type="number" step="any" required></label>
+<label>录入人 <input name="recorded_by" required></label>
+<button>保存基准点</button>
+</form>
+</section>
+<section>
+<h2>生成标定曲线</h2>
+<form id="calibration-form">
+<label>有效期（小时） <input name="valid_hours" type="number" step="any" value="720" required></label>
+<button>生成新版本</button>
+</form>
+</section>
+<section>
+<h2>位置校正</h2>
+<form id="correct-form">
+<label>原始位置 <input name="position" type="number" step="any" required></label>
+<button>校正</button>
+</form>
+<pre id="correction"></pre>
+</section>
+<h2>基准点</h2><pre id="points">loading</pre>
+<h2>标定版本</h2><pre id="calibrations">loading</pre>
+</main><script>
+const refresh = () => {
+  fetch('/api/track-calibration/reference-points').then(r=>r.json()).then(v=>points.textContent=JSON.stringify(v.data,null,2));
+  fetch('/api/track-calibration/calibrations').then(r=>r.json()).then(v=>calibrations.textContent=JSON.stringify(v.data,null,2));
+};
+const post = (url, body) => fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}).then(r=>r.json());
+document.getElementById('point-form').onsubmit = e => {
+  e.preventDefault();
+  const f = e.target;
+  post('/api/track-calibration/reference-points', {
+    label: f.label.value,
+    nominal: parseFloat(f.nominal.value),
+    forward: parseFloat(f.forward.value),
+    reverse: parseFloat(f.reverse.value),
+    recorded_by: f.recorded_by.value,
+    recorded_at: new Date().toISOString()
+  }).then(refresh);
+};
+document.getElementById('calibration-form').onsubmit = e => {
+  e.preventDefault();
+  post('/api/track-calibration/calibrations', {valid_hours: parseFloat(e.target.valid_hours.value)}).then(refresh);
+};
+document.getElementById('correct-form').onsubmit = e => {
+  e.preventDefault();
+  post('/api/track-calibration/correct', {position: parseFloat(e.target.position.value)})
+    .then(v=>correction.textContent=JSON.stringify(v.data,null,2));
+};
+refresh();
+</script></body></html>

@@ -14,6 +14,7 @@ import (
 
 	"github.com/wyw14/solo-037/internal/model"
 	"github.com/wyw14/solo-037/internal/probe"
+	"github.com/wyw14/solo-037/internal/track"
 )
 
 // MeasuredRun contains observations supplied by an operator, unlike the
@@ -31,11 +32,12 @@ type MeasurementInput struct {
 }
 
 type MeasurementAnalysis struct {
-	Operation  model.Operation `json:"operation"`
-	Wave       probe.Analysis  `json:"wave"`
-	ForceCount int             `json:"force_count"`
-	ForceMean  float64         `json:"force_mean"`
-	Evaluated  time.Time       `json:"evaluated_at"`
+	Operation  model.Operation    `json:"operation"`
+	Wave       probe.Analysis     `json:"wave"`
+	ForceCount int                `json:"force_count"`
+	ForceMean  float64            `json:"force_mean"`
+	Positions  []track.Correction `json:"positions"`
+	Evaluated  time.Time          `json:"evaluated_at"`
 }
 
 type MeasurementArchive struct {
@@ -124,8 +126,8 @@ func (a *MeasurementArchive) Create(name, modelName, section, carriage string) (
 }
 
 func (a *MeasurementArchive) Record(id model.RunID, input MeasurementInput) (model.Evidence, error) {
-	if input.Kind != model.EvidenceWaveTime && input.Kind != model.EvidenceForce {
-		return model.Evidence{}, errors.New("measurement kind must be wave_time or force")
+	if input.Kind != model.EvidenceWaveTime && input.Kind != model.EvidenceForce && input.Kind != model.EvidencePosition {
+		return model.Evidence{}, errors.New("measurement kind must be wave_time, force or position")
 	}
 	if strings.TrimSpace(input.SourceID) == "" || math.IsNaN(input.Value) || math.IsInf(input.Value, 0) || input.RecordedAt.IsZero() || input.RecordedAt.After(time.Now().Add(time.Minute)) {
 		return model.Evidence{}, errors.New("source, finite value and valid observation time are required")
@@ -203,5 +205,23 @@ func (r *Runtime) MeasuredRuns() []MeasuredRun { return r.Measurements.List() }
 func (r *Runtime) MeasuredRun(id model.RunID) (MeasuredRun, bool) { return r.Measurements.Get(id) }
 
 func (r *Runtime) AnalyzeMeasuredRun(id model.RunID) (MeasurementAnalysis, error) {
-	return r.Measurements.Analyze(id)
+	analysis, err := r.Measurements.Analyze(id)
+	if err != nil {
+		return analysis, err
+	}
+	// Attach corrected positions so experiments see the raw reading, the
+	// corrected value and the calibration version that produced it.
+	if run, ok := r.Measurements.Get(id); ok {
+		for _, evidence := range run.Evidence {
+			if evidence.Kind != model.EvidencePosition {
+				continue
+			}
+			correction, corrErr := r.Calibrations.Correct(evidence.Value, evidence.RecordedAt)
+			if corrErr != nil {
+				continue
+			}
+			analysis.Positions = append(analysis.Positions, correction)
+		}
+	}
+	return analysis, nil
 }

@@ -15,6 +15,7 @@ type Dependencies interface {
 	Interlocks() any
 	Incidents() any
 	MeasurementService
+	CalibrationService
 }
 
 type Router struct{ dependencies Dependencies }
@@ -33,6 +34,11 @@ func (r *Router) Handler() http.Handler {
 	router.Get("/api/measured-runs/{id}", r.measuredRun)
 	router.Post("/api/measured-runs/{id}/evidence", r.recordMeasurement)
 	router.Get("/api/measured-runs/{id}/analysis", r.measurementAnalysis)
+	router.Get("/api/track-calibration/reference-points", r.referencePoints)
+	router.Post("/api/track-calibration/reference-points", r.recordReferencePoint)
+	router.Get("/api/track-calibration/calibrations", r.calibrations)
+	router.Post("/api/track-calibration/calibrations", r.buildCalibration)
+	router.Post("/api/track-calibration/correct", r.correctPosition)
 	tests := TestHandler{Service: r.dependencies}
 	router.Post("/api/operations", tests.Create)
 	router.Post("/api/abort", tests.Abort)
@@ -40,6 +46,7 @@ func (r *Router) Handler() http.Handler {
 	router.Get("/equipment", r.equipmentPage)
 	router.Get("/interlocks", r.interlocksPage)
 	router.Get("/incidents", r.incidentsPage)
+	router.Get("/calibration", r.calibrationPage)
 	return router
 }
 
@@ -75,4 +82,7 @@ func (r *Router) interlocksPage(w http.ResponseWriter, request *http.Request) {
 }
 func (r *Router) incidentsPage(w http.ResponseWriter, request *http.Request) {
 	http.ServeFile(w, request, "web/incidents.html")
+}
+func (r *Router) calibrationPage(w http.ResponseWriter, request *http.Request) {
+	http.ServeFile(w, request, "web/calibration.html")
 }
